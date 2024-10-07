@@ -23,8 +23,8 @@ export default {
         heading: ['"Permanent Marker"', 'cursive'],
       },
       colors: {
-        'custom-pink':"#FF71CD",
-        'custom-violet': "#8B93F",
+        'custom-pink': "#FF71CD",
+        'custom-violet': "#8B93FF",
         'custom-blue': "#5755FE",
         "custom-white": "#FFF7CF",
         "white-400": "rgba(255, 255, 255, 0.80)"
@@ -32,9 +32,7 @@ export default {
       boxShadow: {
         '3xl': '0 10px 40px rgba(0, 0, 0, 0.1)'
       },
-      backgroundImage: {
-       
-      },
+      backgroundImage: {},
       screens: {
         "wide": "1440px"
       }

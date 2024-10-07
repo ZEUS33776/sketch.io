@@ -1,5 +1,6 @@
 import React, { useRef, useState, useEffect } from 'react';
 
+// Utility function to convert hex color to RGB
 const hexToRgb = (hex) => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
@@ -11,6 +12,7 @@ const hexToRgb = (hex) => {
     : null;
 };
 
+// Utility functions for pixel manipulation
 const getPixelColor = (imageData, x, y) => {
   const index = (y * imageData.width + x) * 4;
   return {
@@ -40,39 +42,31 @@ const colorMatch = (color1, color2, tolerance = 1) => {
   );
 };
 
+// Flood fill implementation
 const floodFill = (canvas, startX, startY, fillColorHex) => {
   const ctx = canvas.getContext('2d');
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
   const fillColor = hexToRgb(fillColorHex);
 
-  // Get the color of the clicked pixel
   const targetColor = getPixelColor(imageData, startX, startY);
-
-  // Don't fill if the target color is the same as fill color
   if (colorMatch(targetColor, fillColor, 1)) return;
 
   const pixelsToCheck = [[startX, startY]];
-  const filledPixels = new Set(); // Track filled pixels to prevent revisiting
+  const filledPixels = new Set();
 
   while (pixelsToCheck.length > 0) {
     const [x, y] = pixelsToCheck.pop();
     const key = `${x},${y}`;
 
-    // Skip if we've already processed this pixel
     if (filledPixels.has(key)) continue;
-
-    // Check bounds
     if (x < 0 || x >= canvas.width || y < 0 || y >= canvas.height) continue;
 
-    // Check if current pixel matches target color
     const currentColor = getPixelColor(imageData, x, y);
     if (!colorMatch(currentColor, targetColor, 1)) continue;
 
-    // Fill the pixel
     setPixelColor(imageData, x, y, fillColor);
     filledPixels.add(key);
 
-    // Add adjacent pixels to check
     pixelsToCheck.push([x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]);
   }
 
@@ -93,6 +87,7 @@ const DrawableCanvas = () => {
   const maxHistory = 50;
   const lastCoordRef = useRef(null);
 
+  // Initialize canvas
   useEffect(() => {
     const canvas = canvasRef.current;
     const ctx = canvas.getContext('2d');
@@ -108,6 +103,7 @@ const DrawableCanvas = () => {
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
 
+      // Set initial canvas properties
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
       ctx.strokeStyle = penColor;
@@ -128,6 +124,7 @@ const DrawableCanvas = () => {
     return () => window.removeEventListener('resize', resizeCanvas);
   }, []);
 
+  // Update canvas properties when tools change
   useEffect(() => {
     if (ctxRef.current) {
       ctxRef.current.strokeStyle = tool === 'eraser' ? '#FFFFFF' : penColor;
@@ -135,6 +132,7 @@ const DrawableCanvas = () => {
     }
   }, [penColor, tool, lineWidth]);
 
+  // Update cursor based on selected tool
   useEffect(() => {
     switch (tool) {
       case 'pen':
@@ -155,6 +153,7 @@ const DrawableCanvas = () => {
     }
   }, [tool]);
 
+  // History management functions
   const saveState = () => {
     const canvas = canvasRef.current;
     const imageData = canvas.toDataURL('image/png');
@@ -203,20 +202,27 @@ const DrawableCanvas = () => {
     }
   };
 
+  // Drawing helper functions
   const getCoordinates = (e) => {
     const canvas = canvasRef.current;
     const rect = canvas.getBoundingClientRect();
     const dpr = window.devicePixelRatio || 1;
 
-    // Calculate the actual coordinates in the canvas space
-    const x = Math.floor((e.clientX - rect.left) * dpr);
-    const y = Math.floor((e.clientY - rect.top) * dpr);
+    // Handle both mouse and touch events
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
 
-    return { x, y };
+    return {
+      x: Math.floor((clientX - rect.left) * dpr),
+      y: Math.floor((clientY - rect.top) * dpr),
+    };
   };
 
+  // Drawing event handlers
   const startDrawing = (e) => {
+    e.preventDefault(); // Prevent scrolling on mobile
     const coords = getCoordinates(e);
+
     if (tool === 'pen' || tool === 'eraser') {
       ctxRef.current.beginPath();
       ctxRef.current.moveTo(
@@ -232,6 +238,7 @@ const DrawableCanvas = () => {
   };
 
   const draw = (e) => {
+    e.preventDefault(); // Prevent scrolling on mobile
     if (!isDrawing || (tool !== 'pen' && tool !== 'eraser')) return;
 
     const coords = getCoordinates(e);
@@ -259,7 +266,7 @@ const DrawableCanvas = () => {
   };
 
   return (
-    <div className="flex flex-col items-center p-4">
+    <div className="flex flex-col items-center p-4 h-full w-full">
       <div className="flex flex-wrap gap-4 mb-4 items-center">
         <label className="flex items-center">
           <span className="mr-2">Pen Color:</span>
@@ -323,11 +330,14 @@ const DrawableCanvas = () => {
       <canvas
         ref={canvasRef}
         onMouseDown={startDrawing}
-        onMouseUp={stopDrawing}
         onMouseMove={draw}
+        onMouseUp={stopDrawing}
         onMouseLeave={stopDrawing}
+        onTouchStart={startDrawing}
+        onTouchMove={draw}
+        onTouchEnd={stopDrawing}
         style={{ cursor }}
-        className="border shadow-md rounded bg-white w-[800px] h-[500px] touch-none"
+        className="border shadow-md rounded bg-white w-full max-w-[800px] h-[500px] touch-none"
       />
     </div>
   );

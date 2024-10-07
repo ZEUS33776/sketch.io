@@ -1,9 +1,10 @@
-@import url(reset.css);
+@import url('https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&family=Permanent+Marker&display=swap');
 
-/* Tailwind CSS directives */
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+/* Add any other custom styles below */
 
 :root {
   --primary-color: #8b93ff;
