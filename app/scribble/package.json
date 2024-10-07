@@ -13,8 +13,10 @@
     "postinstall": "npm run lint:fix && npm run prettier"
   },
   "dependencies": {
+    "@excalidraw/excalidraw": "^0.17.6",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-sketch-canvas": "^6.2.0",
     "socket.io-client": "^4.7.5"
   },
   "devDependencies": {
