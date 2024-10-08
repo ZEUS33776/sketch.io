@@ -1,0 +1,7 @@
+body {
+    background-image: url('./assets/background/bg.jpg'); /* Replace with the URL of your pattern */
+    background-color: #8B93FF; /* Blue background color similar to Skribbl.io */
+    background-size: 150px; /* Adjust size based on pattern */
+    background-repeat: repeat; /* Ensures the image tiles */
+    background-position: center;
+}
