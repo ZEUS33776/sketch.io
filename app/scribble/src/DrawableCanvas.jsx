@@ -1,6 +1,29 @@
 import React, { useRef, useState, useEffect } from 'react';
+import { Pencil, Eraser, PaintBucket, Undo, Redo } from 'lucide-react';
 
-// Utility function to convert hex color to RGB
+const colorPalette = [
+  '#000000',
+  '#FFFFFF',
+  '#FF0000',
+  '#00FF00',
+  '#0000FF',
+  '#FFFF00',
+  '#FF00FF',
+  '#00FFFF',
+  '#FFA500',
+  '#800080',
+  '#A52A2A',
+  '#808080',
+];
+
+const sizePresets = [
+  { size: 2, label: 'XS', cursorSize: 3 },
+  { size: 6, label: 'S', cursorSize: 6 },
+  { size: 12, label: 'M', cursorSize: 12 },
+  { size: 20, label: 'L', cursorSize: 20 },
+];
+
+// Utility functions for pixel manipulation
 const hexToRgb = (hex) => {
   const result = /^#?([a-f\d]{2})([a-f\d]{2})([a-f\d]{2})$/i.exec(hex);
   return result
@@ -12,7 +35,6 @@ const hexToRgb = (hex) => {
     : null;
 };
 
-// Utility functions for pixel manipulation
 const getPixelColor = (imageData, x, y) => {
   const index = (y * imageData.width + x) * 4;
   return {
@@ -28,7 +50,7 @@ const setPixelColor = (imageData, x, y, color) => {
   imageData.data[index] = color.r;
   imageData.data[index + 1] = color.g;
   imageData.data[index + 2] = color.b;
-  imageData.data[index + 3] = 255; // Full opacity
+  imageData.data[index + 3] = 255;
 };
 
 const colorMatch = (color1, color2, tolerance = 1) => {
@@ -42,7 +64,6 @@ const colorMatch = (color1, color2, tolerance = 1) => {
   );
 };
 
-// Flood fill implementation
 const floodFill = (canvas, startX, startY, fillColorHex) => {
   const ctx = canvas.getContext('2d');
   const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
@@ -77,15 +98,43 @@ const DrawableCanvas = () => {
   const canvasRef = useRef(null);
   const ctxRef = useRef(null);
   const [isDrawing, setIsDrawing] = useState(false);
-  const [penColor, setPenColor] = useState('#000000');
-  const [fillColor, setFillColor] = useState('#FF0000');
+  const [selectedColor, setSelectedColor] = useState(colorPalette[0]);
   const [tool, setTool] = useState('pen');
-  const [lineWidth, setLineWidth] = useState(2);
+  const [lineWidth, setLineWidth] = useState(sizePresets[0].size);
   const [cursor, setCursor] = useState('default');
   const [history, setHistory] = useState([]);
   const [currentStep, setCurrentStep] = useState(-1);
   const maxHistory = 50;
   const lastCoordRef = useRef(null);
+
+  // Generate custom cursor SVG
+  const generateCursor = (tool, color, size) => {
+    const cursorSize =
+      sizePresets.find((preset) => preset.size === lineWidth)?.cursorSize || 3;
+    let svg = '';
+
+    if (tool === 'pen') {
+      svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" height="${cursorSize * 2}" width="${cursorSize * 2}" viewBox="0 0 ${cursorSize * 2} ${cursorSize * 2}">
+          <circle cx="${cursorSize}" cy="${cursorSize}" r="${cursorSize}" fill="${color}" stroke="white" stroke-width="1"/>
+        </svg>
+      `;
+    } else if (tool === 'eraser') {
+      svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" height="${cursorSize * 2}" width="${cursorSize * 2}" viewBox="0 0 ${cursorSize * 2} ${cursorSize * 2}">
+          <rect x="${cursorSize - cursorSize / 2}" y="${cursorSize - cursorSize / 2}" width="${cursorSize}" height="${cursorSize}" fill="white" stroke="black" stroke-width="1"/>
+        </svg>
+      `;
+    } else if (tool === 'fill') {
+      svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16">
+          <path d="M8 0L16 8L8 16L0 8L8 0Z" fill="${color}" stroke="white" stroke-width="1"/>
+        </svg>
+      `;
+    }
+
+    return `url('data:image/svg+xml;utf8,${encodeURIComponent(svg)}') ${cursorSize} ${cursorSize}, crosshair`;
+  };
 
   // Initialize canvas
   useEffect(() => {
@@ -103,15 +152,13 @@ const DrawableCanvas = () => {
       canvas.style.width = `${rect.width}px`;
       canvas.style.height = `${rect.height}px`;
 
-      // Set initial canvas properties
       ctx.lineCap = 'round';
       ctx.lineJoin = 'round';
-      ctx.strokeStyle = penColor;
+      ctx.strokeStyle = selectedColor;
       ctx.lineWidth = lineWidth;
       ctx.imageSmoothingEnabled = true;
       ctx.imageSmoothingQuality = 'high';
 
-      // Fill with white background
       ctx.fillStyle = 'white';
       ctx.fillRect(0, 0, canvas.width / dpr, canvas.height / dpr);
     }
@@ -124,34 +171,77 @@ const DrawableCanvas = () => {
     return () => window.removeEventListener('resize', resizeCanvas);
   }, []);
 
-  // Update canvas properties when tools change
+  // Update cursor and context when tool, color, or size changes
   useEffect(() => {
     if (ctxRef.current) {
-      ctxRef.current.strokeStyle = tool === 'eraser' ? '#FFFFFF' : penColor;
+      ctxRef.current.strokeStyle =
+        tool === 'eraser' ? '#FFFFFF' : selectedColor;
       ctxRef.current.lineWidth = tool === 'eraser' ? lineWidth * 2 : lineWidth;
     }
-  }, [penColor, tool, lineWidth]);
 
-  // Update cursor based on selected tool
-  useEffect(() => {
-    switch (tool) {
-      case 'pen':
-        setCursor(
-          `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="3" fill="black" stroke="white" stroke-width="1"/></svg>') 8 8, crosshair`
-        );
-        break;
-      case 'eraser':
-        setCursor(
-          `url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" height="16" width="16" viewBox="0 0 16 16"><rect x="4" y="4" width="8" height="8" fill="white" stroke="black" stroke-width="1"/></svg>') 8 8, crosshair`
-        );
-        break;
-      case 'fill':
-        setCursor('crosshair');
-        break;
-      default:
-        setCursor('default');
+    setCursor(generateCursor(tool, selectedColor, lineWidth));
+  }, [tool, selectedColor, lineWidth]);
+
+  // Drawing functions
+  const getCoordinates = (e) => {
+    const canvas = canvasRef.current;
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+
+    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+
+    return {
+      x: Math.floor((clientX - rect.left) * dpr),
+      y: Math.floor((clientY - rect.top) * dpr),
+    };
+  };
+
+  const startDrawing = (e) => {
+    e.preventDefault();
+    const coords = getCoordinates(e);
+
+    if (tool === 'pen' || tool === 'eraser') {
+      ctxRef.current.beginPath();
+      ctxRef.current.moveTo(
+        coords.x / window.devicePixelRatio,
+        coords.y / window.devicePixelRatio
+      );
+      lastCoordRef.current = coords;
+      setIsDrawing(true);
+    } else if (tool === 'fill') {
+      floodFill(canvasRef.current, coords.x, coords.y, selectedColor);
+      saveState();
     }
-  }, [tool]);
+  };
+
+  const draw = (e) => {
+    e.preventDefault();
+    if (!isDrawing || (tool !== 'pen' && tool !== 'eraser')) return;
+
+    const coords = getCoordinates(e);
+    const ctx = ctxRef.current;
+    const lastCoord = lastCoordRef.current;
+    const dpr = window.devicePixelRatio || 1;
+
+    if (lastCoord) {
+      ctx.beginPath();
+      ctx.moveTo(lastCoord.x / dpr, lastCoord.y / dpr);
+      ctx.lineTo(coords.x / dpr, coords.y / dpr);
+      ctx.stroke();
+    }
+
+    lastCoordRef.current = coords;
+  };
+
+  const stopDrawing = () => {
+    if (isDrawing) {
+      ctxRef.current.closePath();
+      setIsDrawing(false);
+      lastCoordRef.current = null;
+      saveState();
+    }
+  };
 
   // History management functions
   const saveState = () => {
@@ -202,131 +292,15 @@ const DrawableCanvas = () => {
     }
   };
 
-  // Drawing helper functions
-  const getCoordinates = (e) => {
-    const canvas = canvasRef.current;
-    const rect = canvas.getBoundingClientRect();
-    const dpr = window.devicePixelRatio || 1;
-
-    // Handle both mouse and touch events
-    const clientX = e.touches ? e.touches[0].clientX : e.clientX;
-    const clientY = e.touches ? e.touches[0].clientY : e.clientY;
-
-    return {
-      x: Math.floor((clientX - rect.left) * dpr),
-      y: Math.floor((clientY - rect.top) * dpr),
-    };
-  };
-
-  // Drawing event handlers
-  const startDrawing = (e) => {
-    e.preventDefault(); // Prevent scrolling on mobile
-    const coords = getCoordinates(e);
-
-    if (tool === 'pen' || tool === 'eraser') {
-      ctxRef.current.beginPath();
-      ctxRef.current.moveTo(
-        coords.x / window.devicePixelRatio,
-        coords.y / window.devicePixelRatio
-      );
-      lastCoordRef.current = coords;
-      setIsDrawing(true);
-    } else if (tool === 'fill') {
-      floodFill(canvasRef.current, coords.x, coords.y, fillColor);
-      saveState();
-    }
-  };
-
-  const draw = (e) => {
-    e.preventDefault(); // Prevent scrolling on mobile
-    if (!isDrawing || (tool !== 'pen' && tool !== 'eraser')) return;
-
-    const coords = getCoordinates(e);
-    const ctx = ctxRef.current;
-    const lastCoord = lastCoordRef.current;
-    const dpr = window.devicePixelRatio || 1;
-
-    if (lastCoord) {
-      ctx.beginPath();
-      ctx.moveTo(lastCoord.x / dpr, lastCoord.y / dpr);
-      ctx.lineTo(coords.x / dpr, coords.y / dpr);
-      ctx.stroke();
-    }
-
-    lastCoordRef.current = coords;
-  };
-
-  const stopDrawing = () => {
-    if (isDrawing) {
-      ctxRef.current.closePath();
-      setIsDrawing(false);
-      lastCoordRef.current = null;
-      saveState();
-    }
-  };
+  // Size icon component
+  const SizeIcon = ({ size }) => (
+    <svg width="24" height="24" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r={size / 2} fill="currentColor" />
+    </svg>
+  );
 
   return (
-    <div className="flex flex-col items-center p-4 h-full w-full">
-      <div className="flex flex-wrap gap-4 mb-4 items-center">
-        <label className="flex items-center">
-          <span className="mr-2">Pen Color:</span>
-          <input
-            type="color"
-            value={penColor}
-            onChange={(e) => setPenColor(e.target.value)}
-            className="w-8 h-8 border rounded"
-            disabled={tool === 'eraser'}
-          />
-        </label>
-        <label className="flex items-center">
-          <span className="mr-2">Fill Color:</span>
-          <input
-            type="color"
-            value={fillColor}
-            onChange={(e) => setFillColor(e.target.value)}
-            className="w-8 h-8 border rounded"
-            disabled={tool !== 'fill'}
-          />
-        </label>
-        <label className="flex items-center">
-          <span className="mr-2">Line Width:</span>
-          <input
-            type="range"
-            min="1"
-            max="20"
-            value={lineWidth}
-            onChange={(e) => setLineWidth(parseInt(e.target.value))}
-            className="w-32"
-          />
-          <span className="ml-2">{lineWidth}px</span>
-        </label>
-        <select
-          value={tool}
-          onChange={(e) => setTool(e.target.value)}
-          className="border rounded p-2 shadow"
-        >
-          <option value="pen">Pen</option>
-          <option value="eraser">Eraser</option>
-          <option value="fill">Fill Tool</option>
-        </select>
-        <div className="flex gap-2">
-          <button
-            onClick={undo}
-            disabled={currentStep <= 0}
-            className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Undo
-          </button>
-          <button
-            onClick={redo}
-            disabled={currentStep >= history.length - 1}
-            className="px-4 py-2 bg-gray-200 rounded hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Redo
-          </button>
-        </div>
-      </div>
-
+    <div className="flex flex-col items-center h-full w-full">
       <canvas
         ref={canvasRef}
         onMouseDown={startDrawing}
@@ -339,6 +313,89 @@ const DrawableCanvas = () => {
         style={{ cursor }}
         className="border shadow-md rounded bg-white w-full max-w-[800px] h-[500px] touch-none"
       />
+
+      {/* Updated Container */}
+      <div className="flex justify-between gap-4 w-full max-w-[800px] items-center mt-4 mb-4">
+        {/* Color Palette */}
+        <div className="flex gap-2 flex-wrap max-w-[300px]">
+          {colorPalette.map((color) => (
+            <button
+              key={color}
+              onClick={() => setSelectedColor(color)}
+              className={`w-8 h-8 rounded-lg border-2 transition-transform ${
+                selectedColor === color
+                  ? 'scale-110 border-blue-500'
+                  : 'border-gray-300'
+              }`}
+              style={{ backgroundColor: color }}
+              title={color}
+            />
+          ))}
+        </div>
+
+        {/* Tool Selection */}
+        <div className="flex gap-2">
+          <button
+            onClick={() => setTool('pen')}
+            className={`p-2 rounded ${tool === 'pen' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+            title="Pen Tool"
+          >
+            <Pencil size={24} />
+          </button>
+          <button
+            onClick={() => setTool('eraser')}
+            className={`p-2 rounded ${tool === 'eraser' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+            title="Eraser Tool"
+          >
+            <Eraser size={24} />
+          </button>
+          <button
+            onClick={() => setTool('fill')}
+            className={`p-2 rounded ${tool === 'fill' ? 'bg-blue-500 text-white' : 'bg-gray-200'}`}
+            title="Fill Tool"
+          >
+            <PaintBucket size={24} />
+          </button>
+        </div>
+
+        {/* Size Presets */}
+        <div className="flex gap-2">
+          {sizePresets.map((preset) => (
+            <button
+              key={preset.size}
+              onClick={() => setLineWidth(preset.size)}
+              className={`p-2 rounded ${
+                lineWidth === preset.size
+                  ? 'bg-blue-500 text-white'
+                  : 'bg-gray-200'
+              }`}
+              title={`${preset.label} (${preset.size}px)`}
+            >
+              <SizeIcon size={preset.size} />
+            </button>
+          ))}
+        </div>
+
+        {/* Undo/Redo Buttons */}
+        <div className="flex gap-2">
+          <button
+            onClick={undo}
+            disabled={currentStep <= 0}
+            className="p-2 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Undo"
+          >
+            <Undo size={24} />
+          </button>
+          <button
+            onClick={redo}
+            disabled={currentStep >= history.length - 1}
+            className="p-2 rounded bg-gray-200 hover:bg-gray-300 disabled:opacity-50 disabled:cursor-not-allowed"
+            title="Redo"
+          >
+            <Redo size={24} />
+          </button>
+        </div>
+      </div>
     </div>
   );
 };
