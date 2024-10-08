@@ -1,11 +1,13 @@
 @import url('https://fonts.googleapis.com/css2?family=Comic+Neue:wght@400;700&family=Permanent+Marker&display=swap');
-
+@import "@flaticon/flaticon-uicons/css/all/all";
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 /* Add any other custom styles below */
-
+body{
+  background-color: #8B93FF;
+}
 :root {
   --primary-color: #8b93ff;
   --secondary-color: #ff71cd;
