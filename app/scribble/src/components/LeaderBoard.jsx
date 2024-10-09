@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import wizard from '../public/assets/wizard.png';
-import { getLeaderboard } from '../services/leaderBoardServices';
+import wizard from '../assets/wizard.png';
+import { getLeaderboard } from '../../services/leaderBoardServices';
 const LeaderBoard = () => {
   const [users, setUsers] = useState([]);
   useEffect(() => {

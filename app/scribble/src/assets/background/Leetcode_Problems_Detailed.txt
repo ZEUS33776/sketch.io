@@ -1,0 +1,164 @@
+
+Leetcode Problems Related to Sorting, Traveling Salesman, and Other Algorithms:
+
+1. LeetCode #912 - Sort an Array
+   - Algorithm: Merge Sort (Parallelizable)
+   - Solution:
+   ```python
+   def merge_sort(arr):
+       if len(arr) > 1:
+           mid = len(arr) // 2
+           L = arr[:mid]
+           R = arr[mid:]
+
+           merge_sort(L)
+           merge_sort(R)
+
+           i = j = k = 0
+           while i < len(L) and j < len(R):
+               if L[i] < R[j]:
+                   arr[k] = L[i]
+                   i += 1
+               else:
+                   arr[k] = R[j]
+                   j += 1
+               k += 1
+           while i < len(L):
+               arr[k] = L[i]
+               i += 1
+               k += 1
+           while j < len(R):
+               arr[k] = R[j]
+               j += 1
+               k += 1
+   ```
+
+2. LeetCode #56 - Merge Intervals
+   - Algorithm: Sorting based on starting intervals, then merging.
+   - Solution:
+   ```python
+   def merge(intervals):
+       intervals.sort(key=lambda x: x[0])
+       merged = []
+       for interval in intervals:
+           if not merged or merged[-1][1] < interval[0]:
+               merged.append(interval)
+           else:
+               merged[-1][1] = max(merged[-1][1], interval[1])
+       return merged
+   ```
+
+3. LeetCode #257 - Binary Tree Paths
+   - Algorithm: DFS (Parallelizable by different branches of the tree)
+   - Solution:
+   ```python
+   def binaryTreePaths(root):
+       def dfs(node, path, res):
+           if not node:
+               return
+           path += str(node.val)
+           if not node.left and not node.right:
+               res.append(path)
+           else:
+               path += '->'
+               dfs(node.left, path, res)
+               dfs(node.right, path, res)
+       res = []
+       dfs(root, '', res)
+       return res
+   ```
+
+4. LeetCode #322 - Coin Change
+   - Algorithm: Dynamic Programming (Parallelizable for calculating min coins for different amounts)
+   - Solution:
+   ```python
+   def coinChange(coins, amount):
+       dp = [float('inf')] * (amount + 1)
+       dp[0] = 0
+       for coin in coins:
+           for i in range(coin, amount + 1):
+               dp[i] = min(dp[i], dp[i - coin] + 1)
+       return dp[amount] if dp[amount] != float('inf') else -1
+   ```
+
+5. LeetCode #104 - Maximum Depth of Binary Tree
+   - Algorithm: DFS or BFS (DFS can be parallelized)
+   - Solution:
+   ```python
+   def maxDepth(root):
+       if not root:
+           return 0
+       left_depth = maxDepth(root.left)
+       right_depth = maxDepth(root.right)
+       return max(left_depth, right_depth) + 1
+   ```
+
+6. LeetCode #39 - Combination Sum
+   - Algorithm: Backtracking (Parallelizable by exploring different combinations concurrently)
+   - Solution:
+   ```python
+   def combinationSum(candidates, target):
+       res = []
+       def backtrack(remain, comb, start):
+           if remain == 0:
+               res.append(list(comb))
+               return
+           elif remain < 0:
+               return
+           for i in range(start, len(candidates)):
+               comb.append(candidates[i])
+               backtrack(remain - candidates[i], comb, i)
+               comb.pop()
+       backtrack(target, [], 0)
+       return res
+   ```
+
+7. LeetCode #1092 - Shortest Common Supersequence
+   - Algorithm: Dynamic Programming
+   - Solution:
+   ```python
+   def shortestCommonSupersequence(str1, str2):
+       m, n = len(str1), len(str2)
+       dp = [[0] * (n + 1) for _ in range(m + 1)]
+       for i in range(1, m + 1):
+           for j in range(1, n + 1):
+               if str1[i - 1] == str2[j - 1]:
+                   dp[i][j] = dp[i - 1][j - 1] + 1
+               else:
+                   dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+       lcs = []
+       i, j = m, n
+       while i > 0 and j > 0:
+           if str1[i - 1] == str2[j - 1]:
+               lcs.append(str1[i - 1])
+               i -= 1
+               j -= 1
+           elif dp[i - 1][j] > dp[i][j - 1]:
+               lcs.append(str1[i - 1])
+               i -= 1
+           else:
+               lcs.append(str2[j - 1])
+               j -= 1
+       while i > 0:
+           lcs.append(str1[i - 1])
+           i -= 1
+       while j > 0:
+           lcs.append(str2[j - 1])
+           j -= 1
+       return ''.join(reversed(lcs))
+   ```
+
+8. LeetCode #938 - Range Sum of BST
+   - Algorithm: Recursive DFS
+   - Solution:
+   ```python
+   def rangeSumBST(root, low, high):
+       if not root:
+           return 0
+       if root.val < low:
+           return rangeSumBST(root.right, low, high)
+       elif root.val > high:
+           return rangeSumBST(root.left, low, high)
+       else:
+           return root.val + rangeSumBST(root.left, low, high) + rangeSumBST(root.right, low, high)
+   ```

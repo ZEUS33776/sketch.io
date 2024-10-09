@@ -21,4 +21,6 @@ const users = [
     }
 
 ]
-export default users;
+
+const target="hello"
+export  {users,target}
