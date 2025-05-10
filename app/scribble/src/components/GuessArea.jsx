@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useContext, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useContext } from 'react';
 import { getGuesses } from '../../services/guessAreaServices';
 import { TargetContext, GameContext } from '../pages/MainCanvasPage';
 import socket from './socket';
@@ -112,47 +112,34 @@ const GuessArea = ({ disabled }) => {
         // Update state to show correct guess
         setCorrectGuess(true);
         setIsDisabled(true);
-        
-        // Show confirmation toast
-        safeToast.success(`You guessed correctly! +${data.points} points!`);
-        
-        // Force highlight of the correct guess
         setCorrectGuessHighlighted(true);
         
-        // Find all guesses by the current user
-        const userGuesses = guesses.filter(g => g.user === currentUserName);
-        if (userGuesses.length > 0) {
-          // Find the guess that matches the word (if any)
-          const correctGuessIndex = guesses.findIndex(g => 
-            g.user === currentUserName && 
-            g.guess.trim().toLowerCase() === word.trim().toLowerCase()
-          );
-          
-          debugLog("Setting correct guess index to:", correctGuessIndex, "for word:", word);
-          
-          if (correctGuessIndex >= 0) {
-            setMyCorrectGuessIndex(correctGuessIndex);
-          } else {
-            // If we can't find the correct guess, use the last guess by this user
-            const lastUserGuessIndex = guesses.length - 1;
-            for (let i = guesses.length - 1; i >= 0; i--) {
-              if (guesses[i].user === currentUserName) {
-                debugLog("Using last user guess at index:", i);
-                setMyCorrectGuessIndex(i);
-                break;
-              }
-            }
-          }
-        }
-      } else {
-        // Another player guessed correctly
-        debugLog(`${data.user} guessed correctly`);
+        // Find the index of the correct guess
+        const correctIndex = guesses.findIndex(g => 
+          g.user === currentUserName && 
+          g.guess.trim().toLowerCase() === word.trim().toLowerCase()
+        );
         
-        // If all guesses are correct, disable the input
-        if (data.allGuessedCorrectly) {
-          debugLog("All players guessed correctly, disabling input");
-          setIsDisabled(true);
+        debugLog("Setting correct guess index to:", correctIndex, "for word:", word);
+        if (correctIndex >= 0) {
+          setMyCorrectGuessIndex(correctIndex);
+        } else {
+          // If we can't find the guess, try again after a short delay
+          // This could happen if the guess was just added and state hasn't updated yet
+          setTimeout(() => {
+            const newIndex = guesses.findIndex(g => 
+              g.user === currentUserName && 
+              g.guess.trim().toLowerCase() === word.trim().toLowerCase()
+            );
+            debugLog("Retrying to find correct guess, index:", newIndex);
+            if (newIndex >= 0) {
+              setMyCorrectGuessIndex(newIndex);
+            }
+          }, 200);
         }
+        
+        // Show confirmation toast
+        safeToast.success("You guessed correctly!");
       }
     };
     
@@ -197,41 +184,10 @@ const GuessArea = ({ disabled }) => {
   };
 
   const handleIsCorrect = () => {
-    debugLog("Handling correct guess for", { word });
-    
-    // Update local state
+    debugLog("Handling correct guess");
     setCorrectGuess(true);
     setIsDisabled(true);
     setCorrectGuessHighlighted(true);
-    
-    // Find the correct guess in the guess list
-    const userName = localStorage.getItem("userName") || user;
-    
-    // Look through all guesses to find the user's correct one
-    let correctGuessFound = false;
-    for (let i = guesses.length - 1; i >= 0; i--) {
-      const g = guesses[i];
-      if (g.user === userName && g.guess.trim().toLowerCase() === word.trim().toLowerCase()) {
-        debugLog("Found correct guess at index", i);
-        setMyCorrectGuessIndex(i);
-        correctGuessFound = true;
-        break;
-      }
-    }
-    
-    // If we couldn't find an exact match, use the most recent guess by this user
-    if (!correctGuessFound) {
-      for (let i = guesses.length - 1; i >= 0; i--) {
-        if (guesses[i].user === userName) {
-          debugLog("Using most recent guess at index", i);
-          setMyCorrectGuessIndex(i);
-          break;
-        }
-      }
-    }
-    
-    // Show success toast with points
-    safeToast.success("You guessed correctly!");
     
     // Emit correct guess to server
     const roomId = localStorage.getItem("roomId");
@@ -239,6 +195,23 @@ const GuessArea = ({ disabled }) => {
       roomId: roomId,
       word: word
     });
+    
+    // Find the correct guess in the guess list
+    const userName = localStorage.getItem("userName") || user;
+    const correctIndex = guesses.findIndex(g => 
+      g.user === userName && 
+      g.guess.trim().toLowerCase() === word.trim().toLowerCase()
+    );
+    
+    debugLog("Setting correct guess index to:", correctIndex);
+    setMyCorrectGuessIndex(correctIndex);
+    
+    // Force highlight on next render
+    setTimeout(() => {
+      setCorrectGuessHighlighted(true);
+    }, 50);
+    
+    safeToast.success("You guessed correctly!");
   };
 
   const handleGuess = () => {
@@ -252,33 +225,27 @@ const GuessArea = ({ disabled }) => {
     
     debugLog("Sending guess:", trimmedGuess);
     
+    // Emit guess to server
+    socket.emit('guess', {
+      roomId: roomId,
+      guess: trimmedGuess
+    });
+    
     // Add guess to local display immediately
     const newGuess = { user: userName, guess: trimmedGuess };
     const newGuesses = [...guesses, newGuess];
     setGuesses(newGuesses);
     
     // Check if correct - compare case-insensitive and trimmed
-    // Store in a variable to use later
-    const isCorrect = word && trimmedGuess.toLowerCase() === word.trim().toLowerCase();
-    debugLog("Is guess correct?", { isCorrect, guess: trimmedGuess, word });
-    
-    // Always send the guess to the server, which will broadcast it to other clients
-    socket.emit('guess', {
-      roomId: roomId,
-      guess: trimmedGuess
-    });
-    
-    // Clear input field immediately
-    setGuess('');
-    
-    // If correct, handle the correct guess (after a short delay to ensure state updates)
-    if (isCorrect) {
-      debugLog("Correct guess, handling...");
-      // Use a short timeout to ensure the guess is added to the list first
+    if (word && trimmedGuess.toLowerCase() === word.trim().toLowerCase()) {
+      debugLog("Guess is correct!");
+      // We need to wait for the guess to be added to the state before handling correct
       setTimeout(() => {
         handleIsCorrect();
-      }, 50);
+      }, 100);
     }
+    
+    setGuess('');
   };
 
   const handleChange = (e) => {
@@ -335,51 +302,70 @@ const GuessArea = ({ disabled }) => {
     );
   };
 
-  // Function to highlight newly received guesses that match the word
-  const checkAndMarkCorrectGuesses = useCallback(() => {
-    if (word && guesses.length > 0) {
-      const userName = localStorage.getItem("userName") || user;
+  // Add a special effect to handle resetting correctGuessHighlighted
+  useEffect(() => {
+    if (isCorrectGuess) {
+      debugLog("Detected isCorrectGuess is true, ensuring highlighting is shown");
+      setCorrectGuessHighlighted(true);
+      setIsDisabled(true);
       
-      // Scan all guesses, looking for correct ones
-      for (let i = 0; i < guesses.length; i++) {
-        const g = guesses[i];
-        if (g.user === userName && g.guess.trim().toLowerCase() === word.trim().toLowerCase()) {
-          if (!isCorrectGuess) {
-            debugLog(`Found my correct guess at index ${i} but isCorrectGuess is false. Setting correct...`);
-            setCorrectGuess(true);
-            setCorrectGuessHighlighted(true);
-            setMyCorrectGuessIndex(i);
-            setIsDisabled(true);
-            
-            // Notify the server
-            const roomId = localStorage.getItem("roomId");
-            socket.emit('correctGuess', {
-              roomId: roomId,
-              word: word
-            });
-          } else if (myCorrectGuessIndex === null) {
-            // We already know it's correct, but index isn't set
-            debugLog(`Found my correct guess at index ${i} and updating the index`);
-            setMyCorrectGuessIndex(i);
-          }
-          break;
+      // Find my correct guess in the list if we haven't already
+      if (myCorrectGuessIndex === null) {
+        const userName = localStorage.getItem("userName") || user;
+        const index = guesses.findIndex(g => 
+          g.user === userName && 
+          g.guess.trim().toLowerCase() === word?.trim().toLowerCase()
+        );
+        
+        if (index >= 0) {
+          debugLog(`Found my correct guess at index ${index}`);
+          setMyCorrectGuessIndex(index);
         }
       }
     }
-  }, [guesses, word, user, isCorrectGuess, myCorrectGuessIndex, setCorrectGuess]);
+  }, [isCorrectGuess, myCorrectGuessIndex, guesses, word, user]);
   
   // Add a broader listener for all guesses to highlight correct ones
   useEffect(() => {
-    checkAndMarkCorrectGuesses();
-  }, [guesses, word, checkAndMarkCorrectGuesses]);
+    // Check all guesses in case any match the word
+    if (word && guesses.length > 0) {
+      const userName = localStorage.getItem("userName") || user;
+      
+      // Look for my own correct guess
+      const myGuessIndex = guesses.findIndex(g => 
+        g.user === userName && 
+        g.guess.trim().toLowerCase() === word.trim().toLowerCase()
+      );
+      
+      if (myGuessIndex >= 0 && !isCorrectGuess) {
+        debugLog(`Found my correct guess at index ${myGuessIndex} but isCorrectGuess is false. Fixing...`);
+        setCorrectGuess(true);
+        setCorrectGuessHighlighted(true);
+        setMyCorrectGuessIndex(myGuessIndex);
+        setIsDisabled(true);
+      }
+    }
+  }, [guesses, word, user, isCorrectGuess, setCorrectGuess]);
   
   // Force-highlight correct guesses when round ends
   useEffect(() => {
     if (gameContext?.roundEnded && word) {
       debugLog("Round ended, highlighting correct guesses");
-      checkAndMarkCorrectGuesses();
+      
+      // If I had a correct guess, make sure it's highlighted
+      const userName = localStorage.getItem("userName") || user;
+      const myGuessIndex = guesses.findIndex(g => 
+        g.user === userName && 
+        g.guess.trim().toLowerCase() === word.trim().toLowerCase()
+      );
+      
+      if (myGuessIndex >= 0) {
+        setCorrectGuess(true);
+        setMyCorrectGuessIndex(myGuessIndex);
+        setCorrectGuessHighlighted(true);
+      }
     }
-  }, [gameContext?.roundEnded, checkAndMarkCorrectGuesses]);
+  }, [gameContext?.roundEnded, guesses, word, user, setCorrectGuess]);
 
   return (
     <div className="flex flex-col h-full">
@@ -429,43 +415,49 @@ const GuessArea = ({ disabled }) => {
           // 2. This is the specific index that was marked correct by the server
           const isHighlightedByServer = isCurrentUser && index === myCorrectGuessIndex;
           
-          // Apply highlight if any condition is true
-          const shouldHighlight = showAsCorrect || isUserCorrectGuess || isHighlightedByServer;
+          // 3. This user's guess is correct and either they've been highlighted or the context says they're correct
+          const isUserHighlightedCorrect = isCurrentUser && isCorrectWord && (correctGuessHighlighted || isCorrectGuess);
           
-          debugLog(`Rendering guess ${index}:`, { 
+          // Apply highlight if any condition is true:
+          // - If I'm not the drawer, show all correct guesses
+          // - If I am the drawer, only show at end of round
+          const shouldHighlight = (isUserCorrectGuess || isHighlightedByServer || isUserHighlightedCorrect) && (
+            !gameContext?.isDrawing || 
+            gameContext?.roundEnded ||
+            gameContext?.allGuessedCorrectly
+          );
+          
+          debugLog(`Guess ${index}:`, { 
             guess: guess.guess, 
-            user: guess.user,
             isCurrentUser, 
             isCorrectWord, 
             myCorrectGuessIndex, 
             shouldHighlight,
+            correctGuessHighlighted,
             isCorrectGuess,
-            showAsCorrect
+            isDrawer: gameContext?.isDrawing
           });
           
           return (
             <div
               key={index}
               className={`my-1 px-3 py-2 rounded-lg max-w-[85%] ${
-                shouldHighlight 
-                  ? 'bg-green-500 text-white border-2 border-green-600 font-medium shadow-md' 
-                  : isCurrentUser 
-                    ? 'ml-auto bg-indigo-500 text-white' 
-                    : 'bg-gray-100 text-gray-800'
-              } ${
-                isCloseGuess && !isCorrectWord && !gameContext?.isDrawing 
-                  ? 'bg-yellow-400 text-gray-800 border border-yellow-500' 
-                  : ''
+                shouldHighlight ? 'bg-green-500 text-white' : 
+                isCurrentUser ? 'ml-auto bg-indigo-500 text-white' : 'bg-gray-100 text-gray-800'
+              } ${showAsCorrect && !isCurrentUser ? '!bg-green-500 !text-white' : ''} ${
+                isCloseGuess && !isCorrectWord && !gameContext?.isDrawing ? '!bg-yellow-400 !text-gray-800' : ''
               }`}
             >
               <div className="flex items-center gap-2">
                 <span className="font-semibold text-xs truncate max-w-[80px]">
                   {isCurrentUser ? 'You' : guess.user}:
                 </span>
-                <span className="text-sm">
+                <span className={`text-sm ${shouldHighlight || (showAsCorrect && !isCurrentUser) ? 'text-white font-medium' : 
+                  isCurrentUser ? 'text-white' : 'text-gray-700'} ${
+                  isCloseGuess && !isCorrectWord && !gameContext?.isDrawing ? '!text-gray-800 font-medium' : ''}`}>
                   {guess.guess}
                 </span>
-                {shouldHighlight && (
+                {(shouldHighlight || showAsCorrect) && (
                   <CheckCircle size={14} className="text-white ml-1" />
                 )}
               </div>

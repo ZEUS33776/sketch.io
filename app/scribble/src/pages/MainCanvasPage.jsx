@@ -9,7 +9,6 @@ import Clock from "../components/clock/CountdownCircleTimer";
 import WordModal from "../components/wordsModal";
 import socket from "../components/socket";
 import safeToast from "../components/utils/toastUtils";
-import { toast } from "react-hot-toast";
 
 // Fix context initialization with default values
 export const TargetContext = createContext({
@@ -54,12 +53,6 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
     const [hasWordOptions, setHasWordOptions] = useState(false);
     const [currentDrawer, setCurrentDrawer] = useState(null);
     const [timerKey, setTimerKey] = useState(0); // Specific key just for timer resets
-    const [timerSynced, setTimerSynced] = useState(false);
-    const [timerRemainingSeconds, setTimerRemainingSeconds] = useState(60);
-    const [roundEndTime, setRoundEndTime] = useState(null);
-    const [serverTimeOffset, setServerTimeOffset] = useState(0);
-    const [displayTimer, setDisplayTimer] = useState(60);
-    const [correctGuessers, setCorrectGuessers] = useState([]);
     
     // Debug logging for important state changes
     const logStateChange = useCallback((stateName, value) => {
@@ -145,7 +138,6 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
             // Update word selection status
             setWordSelected(true);
             setHasWordOptions(false);
-            setRoundEnded(false);
             
             // Only drawer gets the actual word
             if (data.word) {
@@ -167,12 +159,6 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
                 return prevKey + 1;
             });
             
-            // Request timer sync from server
-            const roomId = localStorage.getItem("roomId");
-            if (roomId) {
-                socket.emit("requestTimerSync", { roomId });
-            }
-            
             // Force a context update to propagate the changes
             setTimeout(() => {
                 console.log('%c[WORD SELECTED STATE UPDATE]', 'background: #dc2626; color: white; padding: 3px;', {
@@ -182,20 +168,6 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
                     word: data.word || ''
                 });
             }, 50);
-        };
-        
-        // Add gameStarted handler
-        const handleGameStarted = (data) => {
-            console.log("Game started event:", data);
-            setRoundEnded(false);
-            setAllGuessedCorrectly(false);
-            
-            // Set timer directly from server data
-            if (data.timer) {
-                setTimerRemainingSeconds(data.timer);
-                setTimerSynced(true);
-                setTimerKey(prevKey => prevKey + 1);
-            }
         };
         
         // Round completion
@@ -231,66 +203,19 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
         };
         
         // Player guessed correctly
-        const handlePlayerGuessedCorrectly = ({ userId }) => {
-            setCorrectGuessers(prev => prev.includes(userId) ? prev : [...prev, userId]);
-        };
-        
-        // Handle allPlayersGuessedCorrectly event
-        const handleAllPlayersGuessedCorrectly = () => {
-            setAllGuessedCorrectly(true);
-        };
-        
-        // Add timer sync handlers
-        const handleTimerSync = (data) => {
-            console.log("Timer sync received:", data);
+        const handlePlayerGuessedCorrectly = (data) => {
+            console.log("Player guessed correctly:", data);
             
-            // Don't update timer if round has ended
-            if (roundEnded || allGuessedCorrectly) {
-                console.log("Not updating timer because round has ended or all guessed correctly");
-                return;
-            }
-            
-            // Calculate precise remaining time based on server's timestamp and data
-            let remainingSeconds;
-            
-            // Prefer using the direct server timer value for consistency
-            remainingSeconds = data.timer;
-            
-            // Only update if this is initial sync or there's a significant difference
-            if (!timerSynced || Math.abs(remainingSeconds - timerRemainingSeconds) > 1) {
-                console.log(`Updating timer: ${timerRemainingSeconds}s → ${remainingSeconds}s`);
-                setTimerRemainingSeconds(remainingSeconds);
-                setTimerSynced(true);
-                
-                // Only reset timer key if the difference is significant (to avoid visual jumps)
-                if (Math.abs(remainingSeconds - timerRemainingSeconds) > 2) {
-                    setTimerKey(prevKey => prevKey + 1);
-                }
-            }
-            
-            // If the server says all players have guessed correctly, immediately end the round
-            if (data.correctGuesses && data.totalGuessers && 
-                data.correctGuesses >= data.totalGuessers && 
-                data.totalGuessers > 0) {
-                console.log("Server reports all players have guessed correctly");
+            // Force timer to stop and round to end immediately if all players guessed correctly
+            if (data.allGuessedCorrectly) {
+                console.log("All players guessed correctly, ending round");
                 setAllGuessedCorrectly(true);
                 setRoundEnded(true);
                 setTimerKey(prevKey => prevKey + 1000); // Force timer reset
-            }
-            
-            logStateChange('timerSync', { 
-                remainingSeconds, 
-                timePercent: (data.remainingMs || 0) / (roundTime * 1000) 
-            });
-        };
-        
-        // Regular timer updates
-        const handleTimerUpdate = (data) => {
-            setRoundEndTime(data.roundEndTime);
-            setServerTimeOffset(Date.now() - data.serverTime);
-            // Only update timer if not all guessed correctly
-            if (!allGuessedCorrectly) {
-                setDisplayTimer(data.remaining);
+                
+                // Notify server to end the round
+                const roomId = localStorage.getItem("roomId");
+                socket.emit("allPlayersGuessedCorrectly", { roomId });
             }
         };
         
@@ -298,13 +223,9 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
         socket.on("drawerAssigned", handleDrawerAssigned);
         socket.on("assignedAsDrawer", handleAssignedAsDrawer);
         socket.on("wordSelected", handleWordSelected);
-        socket.on("gameStarted", handleGameStarted);
         socket.on("roundComplete", handleRoundComplete);
         socket.on("showRoundLeaderboard", handleRoundLeaderboard);
         socket.on("playerGuessedCorrectly", handlePlayerGuessedCorrectly);
-        socket.on("allPlayersGuessedCorrectly", handleAllPlayersGuessedCorrectly);
-        socket.on("timerSync", handleTimerSync);
-        socket.on("timerUpdate", handleTimerUpdate);
         
         // Get initial state
         const roomId = localStorage.getItem("roomId");
@@ -318,32 +239,20 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
             socket.off("drawerAssigned", handleDrawerAssigned);
             socket.off("assignedAsDrawer", handleAssignedAsDrawer);
             socket.off("wordSelected", handleWordSelected);
-            socket.off("gameStarted", handleGameStarted);
             socket.off("roundComplete", handleRoundComplete);
             socket.off("showRoundLeaderboard", handleRoundLeaderboard);
             socket.off("playerGuessedCorrectly", handlePlayerGuessedCorrectly);
-            socket.off("allPlayersGuessedCorrectly", handleAllPlayersGuessedCorrectly);
-            socket.off("timerSync", handleTimerSync);
-            socket.off("timerUpdate", handleTimerUpdate);
         };
     }, []);
     
     // Handle timer completion
     const handleTimerComplete = () => {
         if (!roundEnded && !allGuessedCorrectly) {
-            console.log("Timer complete!");
+            console.log("Timer completed, ending round");
             setRoundEnded(true);
-            setRoundComplete(true);
-            toast("Time's up!");
-            // Notify server about timer completion (as a backup)
+            
             const roomId = localStorage.getItem("roomId");
             socket.emit("timerComplete", { roomId });
-            setTimeout(() => {
-                setRoundComplete(false);
-                setRoundEnded(false);
-                setAllGuessedCorrectly(false);
-                setWord("");
-            }, 5000);
         }
     };
     
@@ -358,7 +267,6 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
         setWord("");
         setHasWordOptions(false);
         setTimerKey(prevKey => prevKey + 1); // Reset timer
-        setCorrectGuessers([]);
         
         // Get fresh drawer info on round change with a slight delay
         // to ensure server has updated its state
@@ -379,16 +287,15 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
     
     // Listen to all guessed correctly event
     useEffect(() => {
-        if (allGuessedCorrectly && !roundEnded) {
+        if (allGuessedCorrectly) {
             console.log("All guessed correctly flag set - ending round");
             setRoundEnded(true);
             setTimerKey(prevKey => prevKey + 1000); // Force timer reset
             
-            // Emit event to server just as a backup
             const roomId = localStorage.getItem("roomId");
             socket.emit("allPlayersGuessedCorrectly", { roomId });
         }
-    }, [allGuessedCorrectly, roundEnded]);
+    }, [allGuessedCorrectly]);
 
     // Add debug useEffect for drawer states
     useEffect(() => {
@@ -471,7 +378,7 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
     const gameContextValue = useMemo(() => ({
         currentRound,
         totalRounds,
-        roundTime: timerSynced ? timerRemainingSeconds : roundTime,
+        roundTime,
         isHost,
         isDrawing,
         setIsDrawing,
@@ -483,36 +390,24 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
         hasWordOptions,
         currentDrawer
     }), [
-        currentRound, 
-        totalRounds, 
-        roundTime, 
-        isHost, 
-        isDrawing, 
-        roundEnded, 
-        gameOver, 
+        currentRound,
+        totalRounds,
+        roundTime,
+        isHost,
+        isDrawing,
+        roundEnded,
+        gameOver,
         gameResults, 
-        allGuessedCorrectly, 
+        allGuessedCorrectly,
         wordSelected,
         hasWordOptions,
-        currentDrawer,
-        timerSynced,
-        timerRemainingSeconds
+        currentDrawer
     ]);
     
     // Log whenever the context value changes
     useEffect(() => {
         console.log('%c[CONTEXT UPDATE] GameContext value changed:', 'background: #8b5cf6; color: white; padding: 3px;', gameContextValue);
     }, [gameContextValue]);
-
-    useEffect(() => {
-        if (!roundEndTime) return;
-        const interval = setInterval(() => {
-            const now = Date.now();
-            const remaining = Math.max(0, Math.ceil((roundEndTime - (now - serverTimeOffset)) / 1000));
-            setDisplayTimer(remaining);
-        }, 200);
-        return () => clearInterval(interval);
-    }, [roundEndTime, serverTimeOffset]);
 
     // Show end game results
     if (gameOver && showLeaderboard) {
@@ -615,29 +510,6 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
         );
     };
 
-    const getRemaining = () => {
-        if (!roundEndTime) return 60; // fallback to 60 if not set
-        const now = Date.now();
-        const val = Math.max(0, Math.ceil((roundEndTime - (now - serverTimeOffset)) / 1000));
-        return isNaN(val) ? 60 : val;
-    };
-
-    const renderClock = () => (
-        <div className="absolute top-4 right-4 md:static md:w-auto z-10">
-            <Clock
-                key={`timer-${displayTimer}`}
-                duration={60}
-                initialRemainingTime={displayTimer}
-                isPlaying={wordSelected && !roundEnded && !allGuessedCorrectly}
-                colors={["#059669", "#facc15", "#f43f5e"]}
-                colorsTime={[60, 30, 0]}
-                size={80}
-                strokeWidth={8}
-                onComplete={handleTimerComplete}
-            />
-        </div>
-    );
-
     return (
         <GameContext.Provider value={gameContextValue}>
             <TargetContext.Provider value={{ word, setWord, isCorrectGuess, setCorrectGuess }}>
@@ -651,7 +523,7 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
                         {/* Left panel - Leaderboard */}
                         <div className="w-1/5 h-full min-w-[200px] max-w-[300px] flex-shrink-0 p-2">
                             <div className="w-full h-full bg-white rounded-md overflow-hidden flex flex-col">
-                                <LeaderBoard correctGuessers={correctGuessers} />
+                                <LeaderBoard />
                             </div>
                         </div>
                         
@@ -685,7 +557,16 @@ const MainCanvasPage = ({ isHost, roomSettings }) => {
                                     <span className="text-sm font-medium text-gray-500">Round</span>
                                     <div className="text-lg font-bold text-indigo-700">{currentRound}/{totalRounds}</div>
                                 </div>
-                                {renderClock()}
+                                <Clock
+                                    key={`timer-${timerKey}`}
+                                    duration={roundTime}
+                                    colors={["#005B3D", "#C6A700", "#FF8C00", "#B22222"]}
+                                    colorsTime={[roundTime * 0.66, roundTime * 0.33, roundTime * 0.15, roundTime * 0.05]}
+                                    size={80}
+                                    strokeWidth={6}
+                                    onComplete={handleTimerComplete}
+                                    isPlaying={wordSelected && !roundEnded && !allGuessedCorrectly}
+                                />
                                 
                                 {/* Timer status message */}
                                 <div className="text-xs text-center mt-2 font-medium">

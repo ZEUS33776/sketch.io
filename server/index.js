@@ -22,8 +22,6 @@ const roomWords = new Map();
 const roomGuesses = new Map();
 // Track player order in each room
 const roomPlayerOrder = new Map();
-// Track active timers for rounds
-const roomTimers = new Map();
 
 // Add word list
 const wordList = [
@@ -428,15 +426,12 @@ io.on("connection", (socket) => {
       console.log(`Guess event from ${socket.id} in room ${data.roomId}: ${data.guess}`);
 
       const userInfo = customSocketIds.get(socket.id);
-      if (!userInfo) {
-        console.error(`No user info for socket ${socket.id}`);
-        return;
-      }
+      if (!userInfo) return;
 
       const roomData = roomWords.get(data.roomId);
       if (!roomData) {
         // If game hasn't started, just broadcast the guess
-        io.to(data.roomId).emit("guess", {
+        socket.to(data.roomId).emit("guess", {
           user: userInfo.userName || "Unknown",
           guess: data.guess,
         });
@@ -453,7 +448,7 @@ io.on("connection", (socket) => {
       }
 
       // Broadcast guess to all users
-      io.to(data.roomId).emit("guess", {
+      socket.to(data.roomId).emit("guess", {
         user: userInfo.userName || "Unknown",
         guess: data.guess,
       });
@@ -468,7 +463,7 @@ io.on("connection", (socket) => {
           return;
         }
         
-        // Process correct guess
+        // Process correct guess - this is simpler than calling the correctGuess event handler
         handleCorrectGuess(socket, data.roomId, roomData.currentWord);
       }
     } catch (error) {
@@ -568,13 +563,6 @@ io.on("connection", (socket) => {
       if (allGuessedCorrectly) {
         console.log(`All players in room ${roomId} have guessed correctly, ending round`);
         
-        // Clear the round timer if it exists
-        if (roomTimers.has(roomId)) {
-          clearInterval(roomTimers.get(roomId).interval);
-          clearTimeout(roomTimers.get(roomId).timeout);
-          roomTimers.delete(roomId);
-        }
-        
         // Award points to drawer based on percentage of correct guessers and average guess time
         const drawerInfo = customSocketIds.get(drawerId);
         if (drawerInfo) {
@@ -627,72 +615,10 @@ io.on("connection", (socket) => {
     }
   };
 
-  // Handle when all players have guessed correctly
-  socket.on("allPlayersGuessedCorrectly", async ({ roomId }) => {
-    try {
-      console.log(`All players guessed correctly notification from client in room ${roomId}`);
-      
-      // Get room data
-      const roomData = roomWords.get(data.roomId);
-      if (!roomData || !roomData.currentWord) {
-        console.error(`No room data or current word for room ${roomId}`);
-        return;
-      }
-      
-      // Clear any round timer
-      if (roomTimers.has(roomId)) {
-        console.log(`Clearing timer for room ${roomId}`);
-        clearInterval(roomTimers.get(roomId).interval);
-        clearTimeout(roomTimers.get(roomId).timeout);
-        roomTimers.delete(roomId);
-      }
-      
-      // Notify all clients that all guesses are correct
-      console.log(`Broadcasting allPlayersGuessedCorrectly to room ${roomId}`);
-      io.to(roomId).emit("allPlayersGuessedCorrectly", {
-        allGuessedCorrectly: true
-      });
-      
-      // Get the current word and broadcast round complete
-      const currentWord = roomData.currentWord;
-      console.log(`Broadcasting roundComplete to room ${roomId}, word: ${currentWord}`);
-      io.to(roomId).emit("roundComplete", {
-        word: currentWord,
-        autoCompleted: true,
-        allGuessedCorrectly: true,
-        immediate: true
-      });
-      
-      // Show leaderboard after a brief delay
-      console.log(`Scheduling leaderboard display for room ${roomId}`);
-      setTimeout(async () => {
-        const leaderboard = await getRoomLeaderboard(roomId);
-        io.to(roomId).emit("showRoundLeaderboard", {
-          leaderboard,
-          duration: 5000
-        });
-        
-        // Advance to next round/drawer after leaderboard is shown
-        console.log(`Scheduling advancement to next drawer for room ${roomId}`);
-        setTimeout(() => {
-          console.log(`Advancing to next drawer for room ${roomId}`);
-          advanceToNextDrawer(roomId);
-        }, 5000);
-      }, 1000);
-    } catch (error) {
-      console.error("Error in allPlayersGuessedCorrectly handler:", error);
-    }
-  });
-
   // Handle correct guesses
   socket.on("correctGuess", async ({ roomId, word }) => {
     // Use the shared handling function
     handleCorrectGuess(socket, roomId, word);
-  });
-
-  // Handle timer complete (this is now just a backup in case clients still send this)
-  socket.on("timerComplete", ({ roomId }) => {
-    handleTimerCompletion(roomId);
   });
 
   // Handle getting user information
@@ -995,11 +921,659 @@ io.on("connection", (socket) => {
       // Clear the canvas for a fresh start with the new word
       roomDrawings.set(roomId, []);
       io.to(roomId).emit("clearCanvas");
-      
-      // Start the server-side timer for this round
-      startRoundTimer(roomId);
     } catch (error) {
       console.error("Error in selectWord:", error);
     }
   });
-}); 
+
+  // Handle requesting word options for drawer
+  socket.on("requestWordOptions", ({ roomId }) => {
+    try {
+      // Check if room exists and user is the current drawer
+      if (!rooms.has(roomId) || !roomWords.has(roomId)) {
+        return;
+      }
+      
+      const roomData = roomWords.get(roomId);
+      if (roomData.drawerId !== socket.id) {
+        console.error("User is not the designated drawer");
+        return;
+      }
+      
+      // Get word options
+      const wordOptions = roomData.wordOptions;
+      socket.emit("wordOptions", { wordOptions });
+    } catch (error) {
+      console.error("Error in requestWordOptions:", error);
+    }
+  });
+
+  // Handle get drawer info request
+  socket.on("getDrawerInfo", ({ roomId }) => {
+    try {
+      console.log(`Drawer info requested by ${socket.id} for room ${roomId}`);
+      
+      if (!rooms.has(roomId)) {
+        console.error(`Room ${roomId} does not exist`);
+        socket.emit("drawerInfo", { error: "Room not found" });
+        return;
+      }
+      
+      // Get room words data
+      const roomData = roomWords.get(roomId);
+      if (!roomData) {
+        // No drawer assigned yet, just return empty data
+        console.log(`No drawer data available for room ${roomId}`);
+        socket.emit("drawerInfo", { 
+          isCurrentDrawer: false,
+          drawerName: null,
+          wordSelected: false
+        });
+        return;
+      }
+      
+      // Always include the drawerId in the response for direct comparison
+      const drawerId = roomData.drawerId;
+      const isCurrentDrawer = socket.id === drawerId;
+      const wordIsSelected = !!roomData.currentWord;
+      
+      console.log(`Drawer info request details:
+- Room: ${roomId}
+- Requester: ${socket.id}
+- Drawer: ${roomData.drawerName} (${drawerId})
+- isCurrentDrawer: ${isCurrentDrawer}
+- wordSelected: ${wordIsSelected}
+- wordOptions: ${roomData.wordOptions?.length || 0} options available
+- currentWord: ${wordIsSelected ? roomData.currentWord : 'not selected yet'}`);
+      
+      // Send data based on whether this is the drawer or not
+      if (isCurrentDrawer) {
+        // This is the drawer
+        const response = {
+          isCurrentDrawer: true,
+          drawerName: roomData.drawerName,
+          drawerId: drawerId,
+          wordSelected: wordIsSelected
+        };
+        
+        // Always include word options if the drawer hasn't selected yet
+        if (!wordIsSelected && roomData.wordOptions && roomData.wordOptions.length > 0) {
+          response.wordOptions = roomData.wordOptions;
+          console.log(`Sending ${roomData.wordOptions.length} word options to drawer ${socket.id}`);
+        } else if (wordIsSelected && roomData.currentWord) {
+          response.word = roomData.currentWord;
+          console.log(`Sending selected word "${roomData.currentWord}" to drawer ${socket.id}`);
+        } else {
+          console.warn(`No word options available for drawer in room ${roomId}`);
+          // If we somehow don't have word options for the drawer, generate some now
+          if (!wordIsSelected) {
+            const wordOptionCount = rooms.get(roomId)?.settings?.wordOptions || 3;
+            const newWordOptions = getRandomWords(wordOptionCount);
+            roomData.wordOptions = newWordOptions;
+            roomWords.set(roomId, roomData);
+            response.wordOptions = newWordOptions;
+            console.log(`Generated ${newWordOptions.length} new word options for drawer ${socket.id}`);
+          }
+        }
+        
+        // Send response to drawer
+        socket.emit("drawerInfo", response);
+        
+        // If the drawer doesn't have a word and we're sending options, also notify them they're the drawer
+        if (!wordIsSelected && response.wordOptions) {
+          // Also send assignedAsDrawer event to ensure the client knows it's their turn
+          socket.emit("assignedAsDrawer", {
+            isDrawing: true,
+            wordOptions: response.wordOptions,
+            drawerName: roomData.drawerName
+          });
+          console.log(`Sent additional assignedAsDrawer event to ensure drawer ${socket.id} gets the message`);
+        }
+      } else {
+        // This is not the drawer, just send basic info
+        socket.emit("drawerInfo", {
+          isCurrentDrawer: false,
+          drawerName: roomData.drawerName,
+          drawerId: drawerId,
+          wordSelected: wordIsSelected,
+          wordLength: wordIsSelected ? roomData.currentWord.length : null
+        });
+        console.log(`Sent non-drawer info to ${socket.id}`);
+      }
+    } catch (error) {
+      console.error("Error in getDrawerInfo:", error);
+      socket.emit("drawerInfo", { error: "Failed to get drawer info" });
+    }
+  });
+
+  // Handle timer complete
+  socket.on("timerComplete", ({ roomId }) => {
+    try {
+      // Check if room exists
+      if (!rooms.has(roomId) || !roomWords.has(roomId)) {
+        console.error(`Room ${roomId} does not exist or no word data available`);
+        return;
+      }
+
+      const room = rooms.get(roomId);
+      const roomData = roomWords.get(roomId);
+      const currentWord = roomData.currentWord;
+      
+      if (!currentWord) {
+        console.error(`No word selected for room ${roomId}`);
+        return;
+      }
+      
+      console.log(`Timer completed for room ${roomId}. Word was: ${currentWord}`);
+      
+      // Award points to drawer based on users who guessed correctly
+      const drawerId = roomData.drawerId;
+      const drawerInfo = customSocketIds.get(drawerId);
+      
+      // Get all correct guesses with their timestamps
+      const userGuesses = roomGuesses.get(roomId) || new Map();
+      const roomSockets = io.sockets.adapter.rooms.get(roomId);
+      
+      if (roomSockets && drawerInfo) {
+        // Count total guessers (all users except drawer)
+        let totalGuessers = 0;
+        for (const socketId of roomSockets) {
+          if (socketId !== drawerId) {
+            totalGuessers++;
+          }
+        }
+        
+        // Get number of correct guesses
+        const numCorrectGuesses = userGuesses.size;
+        
+        if (drawerInfo && numCorrectGuesses > 0) {
+          // Calculate average guess time
+          let totalGuessTime = 0;
+          userGuesses.forEach((guessTime) => {
+            totalGuessTime += guessTime - roomData.roundStartTime;
+          });
+          const avgGuessTime = totalGuessTime / userGuesses.size / 1000; // average in seconds
+          
+          // Calculate drawer points (0-200 scale)
+          const roundTime = room.settings.roundTime;
+          const drawerPoints = calculateDrawerScore(numCorrectGuesses, totalGuessers, avgGuessTime, roundTime);
+          
+          drawerInfo.points += drawerPoints;
+          customSocketIds.set(drawerId, drawerInfo);
+          
+          // Save drawer progress
+          userProgress.set(drawerInfo.userId, {
+            points: drawerInfo.points,
+            userName: drawerInfo.userName,
+            avatar: drawerInfo.avatar,
+            isHost: drawerInfo.isHost,
+            lastActive: Date.now()
+          });
+          
+          // Notify everyone about drawer points
+          io.to(roomId).emit("drawerEarnedPoints", {
+            user: drawerInfo.userName,
+            points: drawerPoints
+          });
+        }
+      }
+      
+      // Notify clients that time expired
+      io.to(roomId).emit("roundComplete", {
+        word: currentWord,
+        autoCompleted: true,
+        timeExpired: true
+      });
+      
+      // Update room users to reflect new points
+      updateRoomUsers(roomId);
+      
+      // Show leaderboard
+      getRoomLeaderboard(roomId).then(leaderboard => {
+        io.to(roomId).emit("showRoundLeaderboard", {
+          leaderboard,
+          duration: 5000 // Show for 5 seconds
+        });
+        
+        // Move to next drawer in order after leaderboard display
+        setTimeout(() => {
+          advanceToNextDrawer(roomId);
+        }, 5000);
+      });
+    } catch (error) {
+      console.error("Error in timerComplete:", error);
+    }
+  });
+});
+
+// Helper function to update room users
+async function updateRoomUsers(roomId) {
+  try {
+    const sockets = await io.in(roomId).fetchSockets();
+
+    // Get the room to determine who the host is
+    const roomInfo = rooms.get(roomId);
+    if (!roomInfo) {
+      console.error(`Room ${roomId} not found during updateRoomUsers`);
+      return;
+    }
+    
+    // Check if this room needs a new host
+    const needsNewHost = roomInfo.needsNewHost || 
+                        !sockets.some(s => s.id === roomInfo.hostId);
+    
+    // If we need a new host and there are users, assign the first one
+    if (needsNewHost && sockets.length > 0) {
+      const newHostSocket = sockets[0];
+      console.log(`Assigning new host in room ${roomId}: ${newHostSocket.id}`);
+      
+      roomInfo.hostId = newHostSocket.id;
+      roomInfo.needsNewHost = false;
+      rooms.set(roomId, roomInfo);
+      
+      // Update this user's host status
+      const userInfo = customSocketIds.get(newHostSocket.id);
+      if (userInfo) {
+        userInfo.isHost = true;
+        customSocketIds.set(newHostSocket.id, userInfo);
+        
+        // Notify the new host
+        newHostSocket.emit("hostAssigned", { isHost: true });
+      }
+    }
+    
+    const hostId = roomInfo.hostId;
+    console.log(`Updating room ${roomId} users. Host ID: ${hostId}`);
+
+    const users = sockets.map((s) => {
+      const userInfo = customSocketIds.get(s.id);
+      
+      // A user is the host ONLY if they match the room's hostId
+      const isHostUser = s.id === hostId;
+      
+      // Update the user info to reflect the correct host status
+      if (userInfo && userInfo.isHost !== isHostUser) {
+        userInfo.isHost = isHostUser;
+        customSocketIds.set(s.id, userInfo);
+      }
+
+      if (isHostUser) {
+        console.log(`Found host user: ${userInfo?.userName || "Unknown"} (${s.id})`);
+      }
+
+      return {
+        userName: userInfo?.userName || "Unknown",
+        avatar: userInfo?.avatar || "",
+        points: userInfo?.points || 0,
+        isHost: isHostUser,
+        userId: userInfo?.userId || s.id
+      };
+    });
+
+    console.log(`Updated user list for room ${roomId}:`, users);
+
+    io.to(roomId).emit("roomUsers", users);
+  } catch (error) {
+    console.error("Error in updateRoomUsers:", error);
+  }
+}
+
+// Helper function to generate a unique room ID
+function generateUniqueRoomId() {
+  const id = Math.random().toString(36).substring(2, 8).toUpperCase();
+  // Check if this ID already exists
+  if (rooms.has(id)) {
+    // Recursively try again
+    return generateUniqueRoomId();
+  }
+  return id;
+}
+
+// Setup a periodic cleanup task for inactive rooms
+setInterval(() => {
+  try {
+    const now = Date.now();
+    let roomsRemoved = 0;
+    
+    rooms.forEach((room, roomId) => {
+      // Remove rooms that are more than 24 hours old and have no active players
+      const roomAge = now - (room.createdAt || 0);
+      const hasPlayers = io.sockets.adapter.rooms.get(roomId)?.size > 0;
+      
+      if (roomAge > 24 * 60 * 60 * 1000 && !hasPlayers) {
+        rooms.delete(roomId);
+        roomDrawings.delete(roomId);
+        roomsRemoved++;
+      }
+    });
+    
+    if (roomsRemoved > 0) {
+      console.log(`Cleaned up ${roomsRemoved} inactive rooms`);
+    }
+  } catch (error) {
+    console.error("Error in room cleanup task:", error);
+  }
+}, 60 * 60 * 1000); // Run every hour
+
+// Helper function to get room leaderboard
+async function getRoomLeaderboard(roomId) {
+  try {
+    const sockets = await io.in(roomId).fetchSockets();
+    
+    const users = sockets.map((s) => {
+      const userInfo = customSocketIds.get(s.id);
+      return {
+        userName: userInfo?.userName || "Unknown",
+        avatar: userInfo?.avatar || "",
+        points: userInfo?.points || 0,
+        userId: userInfo?.userId || s.id
+      };
+    });
+    
+    // Sort by points in descending order
+    return users.sort((a, b) => b.points - a.points);
+  } catch (error) {
+    console.error("Error in getRoomLeaderboard:", error);
+    return [];
+  }
+}
+
+// Replace the selectDrawerForRoom function with this new implementation
+function selectNextDrawerForRoom(roomId) {
+  try {
+    if (!rooms.has(roomId)) {
+      console.error(`Room ${roomId} does not exist - cannot select drawer`);
+      return;
+    }
+    
+    const room = rooms.get(roomId);
+    
+    // Get player order for this room
+    const playerOrderData = roomPlayerOrder.get(roomId);
+    if (!playerOrderData || !playerOrderData.order || playerOrderData.order.length === 0) {
+      console.error(`No player order established for room ${roomId}`);
+      return;
+    }
+    
+    // Verify we have enough players
+    if (playerOrderData.order.length < 1) {
+      console.error(`Not enough players in room ${roomId} to select a drawer`);
+      return;
+    }
+    
+    const { order, currentDrawerIndex } = playerOrderData;
+    const drawerId = order[currentDrawerIndex];
+    
+    // Verify the drawer socket still exists
+    const roomSockets = io.sockets.adapter.rooms.get(roomId);
+    if (!roomSockets || !roomSockets.has(drawerId)) {
+      console.error(`Drawer socket ${drawerId} no longer in room ${roomId}, selecting another one`);
+      
+      // Update player order by removing the disconnected player
+      playerOrderData.order = playerOrderData.order.filter(id => roomSockets.has(id));
+      
+      // Reset drawer index if we removed the last player
+      if (currentDrawerIndex >= playerOrderData.order.length) {
+        playerOrderData.currentDrawerIndex = 0;
+      }
+      
+      // If we still have players, try again
+      if (playerOrderData.order.length > 0) {
+        roomPlayerOrder.set(roomId, playerOrderData);
+        return selectNextDrawerForRoom(roomId);
+      } else {
+        console.error(`No active players left in room ${roomId}`);
+        return;
+      }
+    }
+    
+    // Get drawer's user info
+    const userInfo = customSocketIds.get(drawerId);
+    const drawerName = userInfo?.userName || "Unknown";
+    
+    // Generate word options
+    const wordOptionCount = room.settings.wordOptions || 3;
+    const wordOptions = getRandomWords(wordOptionCount);
+    
+    console.log(`Selected drawer ${drawerName} (${drawerId}) for room ${roomId} (player ${currentDrawerIndex + 1} of ${order.length})`);
+    console.log(`Generated ${wordOptions.length} word options for drawer`);
+    
+    // Store information about current round
+    roomWords.set(roomId, {
+      drawerId,
+      drawerName,
+      wordOptions,
+      currentWord: null,
+      roundStartTime: null,    // This will be set when word is selected
+      wordSelectedTime: null   // This will be set when word is selected
+    });
+    
+    // First, notify all users that a new drawer has been assigned
+    console.log(`Broadcasting 'drawerAssigned' event to room ${roomId} with drawer ${drawerName}`);
+    io.to(roomId).emit("drawerAssigned", { 
+      drawerId,
+      drawerName
+    });
+    
+    // Then notify each player about their specific role
+    io.in(roomId).fetchSockets().then(sockets => {
+      console.log(`Found ${sockets.length} sockets in room ${roomId}`);
+      
+      // Notify each non-drawer of their role
+      sockets.forEach(socket => {
+        if (socket.id !== drawerId) {
+          console.log(`Sending 'assignedAsDrawer' with isDrawing=false to ${socket.id}`);
+          socket.emit("assignedAsDrawer", { 
+            isDrawing: false,
+            drawerName: drawerName
+          });
+        }
+      });
+      
+      // Find the drawer socket and notify them
+      const drawerSocket = sockets.find(s => s.id === drawerId);
+      if (drawerSocket) {
+        console.log(`Sending 'assignedAsDrawer' with isDrawing=true and ${wordOptions.length} word options to drawer ${drawerId}`);
+        
+        // This is the drawer - send word options
+        drawerSocket.emit("assignedAsDrawer", { 
+          isDrawing: true,
+          wordOptions,
+          drawerName // Include drawer's name for consistency
+        });
+        
+        // Set a 5-second timer for word selection
+        console.log(`Setting 5-second timeout for word selection for drawer ${drawerName}`);
+        setTimeout(() => {
+          try {
+            // Check if word has been selected
+            const currentRoomData = roomWords.get(roomId);
+            if (currentRoomData && currentRoomData.drawerId === drawerId && !currentRoomData.currentWord) {
+              console.log(`Word not selected within timeout for drawer ${drawerName}, auto-selecting a word`);
+              
+              // Word not selected within 5 seconds, auto-select a random word
+              const randomWordIndex = Math.floor(Math.random() * wordOptions.length);
+              const randomWord = wordOptions[randomWordIndex];
+              
+              // Update room data with selected word
+              currentRoomData.currentWord = randomWord;
+              const now = Date.now();
+              currentRoomData.wordSelectedTime = now;
+              currentRoomData.roundStartTime = now;
+              roomWords.set(roomId, currentRoomData);
+              
+              console.log(`Auto-selected word "${randomWord}" for drawer ${drawerName} in room ${roomId}`);
+              
+              // Notify drawer about auto-selected word
+              io.to(drawerId).emit("wordSelected", { word: randomWord });
+              
+              // Broadcast to all clients that a word has been selected
+              io.to(roomId).emit("gameState", {
+                wordSelected: true,
+                currentDrawer: currentRoomData.drawerName
+              });
+              
+              // Notify guessers about word length
+              io.to(roomId).except(drawerId).emit("wordSelected", { 
+                length: randomWord.length,
+                hint: randomWord.replace(/[a-zA-Z]/g, '_')
+              });
+            } else {
+              console.log(`Drawer ${drawerName} already selected a word, or drawer changed`);
+            }
+          } catch (error) {
+            console.error("Error in word auto-selection:", error);
+          }
+        }, 5000);
+      } else {
+        console.error(`Drawer socket ${drawerId} not found in room ${roomId} after fetch`);
+      }
+      
+      // Clear canvas for next round
+      roomDrawings.set(roomId, []);
+      io.to(roomId).emit("clearCanvas");
+    }).catch(error => {
+      console.error(`Error fetching sockets for room ${roomId}:`, error);
+    });
+  } catch (error) {
+    console.error("Error in selectNextDrawerForRoom:", error);
+  }
+}
+
+// Helper function to calculate guesser score (0-200 based on time)
+function calculateGuesserScore(startTime, guessTime, roundTime) {
+  const timeElapsed = (guessTime - startTime) / 1000; // in seconds
+  const timeRatio = Math.max(0, Math.min(1, 1 - (timeElapsed / roundTime)));
+  return Math.floor(200 * timeRatio);
+}
+
+// Helper function to calculate drawer score (0-200 based on % correct and avg time)
+function calculateDrawerScore(correctGuessers, totalGuessers, avgGuessTime, roundTime) {
+  if (totalGuessers === 0 || correctGuessers === 0) return 0;
+  
+  // Score based on percentage of correct guesses (0-100)
+  const percentageScore = Math.floor(100 * (correctGuessers / totalGuessers));
+  
+  // Score based on average guess time (0-100)
+  const timeRatio = Math.max(0, Math.min(1, 1 - (avgGuessTime / roundTime)));
+  const timeScore = Math.floor(100 * timeRatio);
+  
+  // Combine scores (0-200)
+  return percentageScore + timeScore;
+}
+
+// Add new function to advance to the next drawer in order
+function advanceToNextDrawer(roomId) {
+  try {
+    if (!rooms.has(roomId)) {
+      console.error(`Room ${roomId} does not exist`);
+      return;
+    }
+
+    const room = rooms.get(roomId);
+    const playerOrderData = roomPlayerOrder.get(roomId);
+    
+    if (!playerOrderData || !playerOrderData.order || playerOrderData.order.length === 0) {
+      console.error(`No player order data for room ${roomId}`);
+      return;
+    }
+    
+    // Clear any existing drawer data for this room
+    if (roomWords.has(roomId)) {
+      // Just reset the word, but keep the drawer info
+      const roomData = roomWords.get(roomId);
+      roomData.currentWord = null;
+      roomData.wordSelectedTime = null;
+      roomData.roundStartTime = null;
+      roomWords.set(roomId, roomData);
+    }
+    
+    // Clear guesses for this room
+    roomGuesses.delete(roomId);
+    
+    // Increment the current drawer index
+    playerOrderData.currentDrawerIndex = (playerOrderData.currentDrawerIndex + 1) % playerOrderData.order.length;
+    roomPlayerOrder.set(roomId, playerOrderData);
+    
+    // Check if we've completed all rounds
+    if (playerOrderData.currentDrawerIndex === 0) {
+      room.currentRound += 1;
+    }
+    
+    const isGameOver = room.currentRound > room.settings.rounds;
+    
+    if (isGameOver) {
+      room.gameStarted = false;
+      room.currentRound = 0;
+      
+      console.log(`Game over for room ${roomId}. Getting final leaderboard.`);
+      
+      // Game over - emit final scores
+      getRoomLeaderboard(roomId).then(leaderboard => {
+        io.to(roomId).emit("gameState", {
+          gameStarted: false,
+          isGameOver: true,
+          gameResults: leaderboard
+        });
+      });
+    } else {
+      // Set a small delay to allow round completion to finish
+      setTimeout(() => {
+        // Clear canvas for next round
+        roomDrawings.set(roomId, []);
+        io.to(roomId).emit("clearCanvas");
+        
+        console.log(`Advancing to round ${room.currentRound} in room ${roomId}. Notifying clients.`);
+        
+        // Notify clients about round change
+        io.to(roomId).emit("gameState", {
+          gameStarted: true,
+          currentRound: room.currentRound,
+          totalRounds: room.settings.rounds
+        });
+        
+        // Additional event specific for round change
+        io.to(roomId).emit("roundChanged", {
+          currentRound: room.currentRound,
+          totalRounds: room.settings.rounds
+        });
+        
+        // Small delay to ensure state updates properly before selecting drawer
+        setTimeout(() => {
+          // Select next drawer in order
+          selectNextDrawerForRoom(roomId);
+        }, 500);
+      }, 1000);
+    }
+    
+    rooms.set(roomId, room);
+  } catch (error) {
+    console.error("Error in advanceToNextDrawer:", error);
+  }
+}
+
+// Modify the autoCompleteRound function to use the new advanceToNextDrawer function
+async function autoCompleteRound(roomId, hostSocketId) {
+  try {
+    if (!rooms.has(roomId)) {
+      console.error(`Room ${roomId} does not exist for auto-completion`);
+      return;
+    }
+
+    console.log(`Auto-completing round for room ${roomId}`);
+    
+    // Clear guesses for this room
+    roomGuesses.delete(roomId);
+    
+    // Move to the next drawer in order
+    advanceToNextDrawer(roomId);
+  } catch (error) {
+    console.error("Error in autoCompleteRound:", error);
+  }
+}
+
+// Get random words from the wordlist
+function getRandomWords(count) {
+  const shuffled = [...wordList].sort(() => 0.5 - Math.random());
+  return shuffled.slice(0, count);
+}

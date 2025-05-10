@@ -4,7 +4,7 @@ import { toast } from 'react-hot-toast';
 import { RefreshCw } from 'lucide-react';
 import { GameContext } from '../pages/MainCanvasPage';
 
-const LeaderBoard = ({ correctGuessers = [] }) => {
+const LeaderBoard = () => {
   const [users, setUsers] = useState([]);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const gameContext = useContext(GameContext);
@@ -68,12 +68,10 @@ const LeaderBoard = ({ correctGuessers = [] }) => {
           );
         }
         
-        // Request updated user list multiple times with increasing delays
-        // to ensure we catch the server-side updates
+        // Request updated user list immediately and after a short delay
         refreshUserList();
-        setTimeout(refreshUserList, 300);
-        setTimeout(refreshUserList, 1000);
-        setTimeout(refreshUserList, 2500);
+        setTimeout(refreshUserList, 500);
+        setTimeout(refreshUserList, 1500); // Try one more time after a longer delay
       }
     };
     
@@ -168,10 +166,7 @@ const LeaderBoard = ({ correctGuessers = [] }) => {
       ) : (
         <ul className="overflow-y-auto flex-grow divide-y">
           {users.map((user, index) => (
-            <li
-              key={index}
-              className={`flex items-center p-2 hover:bg-gray-50 ${correctGuessers.includes(user.userId || user.id) ? 'bg-green-200 border-green-400' : ''}`}
-            >
+            <li key={index} className="flex items-center p-2 hover:bg-gray-50">
               <div className={`w-6 h-6 flex items-center justify-center mr-2 rounded-full ${
                 index === 0 ? 'bg-yellow-100 text-yellow-800' : 
                 index === 1 ? 'bg-gray-100 text-gray-800' : 
