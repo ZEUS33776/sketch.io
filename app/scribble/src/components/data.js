@@ -22,5 +22,5 @@ const users = [
 
 ]
 
-const target="hello"
+const target = "";
 export  {users,target}

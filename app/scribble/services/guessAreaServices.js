@@ -1,10 +1,7 @@
-const getGuesses = ()=>{
+
+const getGuesses = () => {
     const data = [
-            { user: 'test', guess: 'test' },
-            { user: 'test', guess: 'test' },
-            { user: 'test', guess: 'test' },
-            { user: 'test', guess: 'test' },
-            { user: 'test', guess: 'test' },
+            { user: 'Sketch.io', guess: 'Put in your GUESS!' }
         ];
     
         return data;
